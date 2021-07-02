@@ -3,6 +3,7 @@
 #import <React/RCTEventEmitter.h>
 #import <React/RCTBridgeModule.h>
 #import <Photos/Photos.h>
+#import <errno.h>
 
 @interface VydiaRNFileUploader : RCTEventEmitter <RCTBridgeModule, NSURLSessionTaskDelegate>
 {
@@ -57,7 +58,7 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
     @try {
         // Escape non latin characters in filename
         NSString *escapedPath = [path stringByAddingPercentEncodingWithAllowedCharacters: NSCharacterSet.URLQueryAllowedCharacterSet];
-       
+
         NSURL *fileUri = [NSURL URLWithString:escapedPath];
         NSString *pathWithoutProtocol = [fileUri path];
         NSString *name = [fileUri lastPathComponent];
@@ -108,7 +109,9 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
         NSURL *url = [NSURL URLWithString:assetUrl];
         asset = [PHAsset fetchAssetsWithALAssetURLs:@[url] options:nil].lastObject;
     } else {
-        asset = [[PHAsset fetchAssetsWithLocalIdentifiers:@[assetUrl] options:nil] firstObject];
+        NSArray *urlArray = [assetUrl componentsSeparatedByString:@"://"];
+        NSString *location = [urlArray objectAtIndex:1];
+        asset = [[PHAsset fetchAssetsWithLocalIdentifiers:@[location] options:nil] firstObject];
     }
 
     if (!asset) {
@@ -117,22 +120,77 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
         completionHandler(nil,  [NSError errorWithDomain:@"RNUploader" code:5 userInfo:details]);
         return;
     }
-    PHAssetResource *assetResource = [[PHAssetResource assetResourcesForAsset:asset] firstObject];
+
+    NSArray *resourceList = [PHAssetResource assetResourcesForAsset:asset];
+    __block PHAssetResource *assetResource;
+    __block BOOL jpegFound = NO;
+    [resourceList enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        PHAssetResource *resource = obj;
+        NSLog(@"resource %@ uniformTypeIdentifier %@", resource, resource.uniformTypeIdentifier);
+        if ([resource.uniformTypeIdentifier isEqualToString:@"public.jpeg"]) {
+            assetResource = resource;
+            jpegFound = YES;
+        }
+    }];
+
     NSString *pathToWrite = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
     NSURL *pathUrl = [NSURL fileURLWithPath:pathToWrite];
     NSString *fileURI = pathUrl.absoluteString;
 
-    PHAssetResourceRequestOptions *options = [PHAssetResourceRequestOptions new];
-    options.networkAccessAllowed = YES;
+    if (jpegFound) {
+        PHAssetResourceRequestOptions *options = [PHAssetResourceRequestOptions new];
+        options.networkAccessAllowed = YES;
 
-    [[PHAssetResourceManager defaultManager] writeDataForAssetResource:assetResource toFile:pathUrl options:options completionHandler:^(NSError * _Nullable e) {
-        if (e == nil) {
-            completionHandler(fileURI, nil);
-        }
-        else {
-            completionHandler(nil, e);
-        }
-    }];
+        [[PHAssetResourceManager defaultManager] writeDataForAssetResource:assetResource toFile:pathUrl options:options completionHandler:^(NSError * _Nullable e) {
+            if (e == nil) {
+                completionHandler(fileURI, nil);
+            }
+            else {
+                completionHandler(nil, e);
+            }
+        }];
+    } else {
+        // Get image data
+        PHImageManager *imageManager = [PHImageManager defaultManager];
+
+        PHImageRequestOptions *options = [PHImageRequestOptions new];
+        options.networkAccessAllowed = YES;
+        options.synchronous = YES;
+
+        [imageManager requestImageForAsset:asset targetSize:PHImageManagerMaximumSize
+                                                 contentMode:PHImageContentModeDefault
+                                                 options:options
+                                                 resultHandler:^(UIImage *image, NSDictionary *info) {
+            NSLog(@"got asset %@ image %@ info %@", asset, image, info);
+            // Write it to some temp file as a JPEG
+            NSData* imageData = UIImageJPEGRepresentation(image, 1.0f);
+            NSLog(@"imageData %@", imageData);
+
+            NSError* error;
+            BOOL result;
+            NSString *filePath = pathUrl.path;
+
+            // result = [[NSFileManager defaultManager] createDirectoryAtPath:NSTemporaryDirectory() withIntermediateDirectories:YES attributes:nil error:&error];
+
+            // NSLog(@"createDirectoryAtPath %d error: %@", result, error);
+
+            result = [[NSFileManager defaultManager] createFileAtPath:filePath contents:nil attributes:nil];
+
+            NSLog(@"createFileAtPath %d %d %s", result, errno, strerror(errno));
+
+            result = [imageData writeToFile:filePath options:NSDataWritingFileProtectionNone error:&error];
+
+            NSLog(@"createDirectoryAtPath %d error: %@", result, error);
+
+            // Return that
+            if (result == YES) {
+                completionHandler(fileURI, nil);
+            } else {
+                NSError *underlyingError = [[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:EIO userInfo:nil];
+                completionHandler(nil, underlyingError);
+            }
+        }];
+    }
 }
 
 /*
@@ -186,17 +244,28 @@ RCT_EXPORT_METHOD(startUpload:(NSDictionary *)options resolve:(RCTPromiseResolve
         // asset library files have to be copied over to a temp file.  they can't be uploaded directly
         if ([fileURI hasPrefix:@"assets-library"] || [fileURI hasPrefix:@"ph"]) {
             dispatch_group_t group = dispatch_group_create();
+            NSLog(@"# Group enter");
+            __block BOOL success = YES;
             dispatch_group_enter(group);
             [self copyAssetToFile:fileURI completionHandler:^(NSString * _Nullable tempFileUrl, NSError * _Nullable error) {
+                NSLog(@"# Copy complete, error %@, tempURL %@", [error localizedDescription], tempFileUrl);
                 if (error) {
+                    success = NO;
                     dispatch_group_leave(group);
                     reject(@"RN Uploader", @"Asset could not be copied to temp file.", nil);
                     return;
                 }
                 fileURI = tempFileUrl;
+                NSLog(@"# Group leave");
                 dispatch_group_leave(group);
             }];
+            NSLog(@"# Group wait");
             dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+            NSLog(@"# Group wait done");
+            if (!success) {
+                NSLog(@"# Unsuccessful");
+                return;
+            }
         }
 
         NSURLSessionDataTask *uploadTask;
@@ -258,7 +327,7 @@ RCT_EXPORT_METHOD(cancelUpload: (NSString *)cancelUploadId resolve:(RCTPromiseRe
 
     // resolve path
     NSURL *fileUri = [NSURL URLWithString: escapedPath];
-    
+
     NSError* error = nil;
     NSData *data = [NSData dataWithContentsOfURL:fileUri options:NSDataReadingMappedAlways error: &error];
 
