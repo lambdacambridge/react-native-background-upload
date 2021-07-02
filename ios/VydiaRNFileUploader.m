@@ -102,8 +102,15 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
  Utility method to copy a PHAsset file into a local temp file, which can then be uploaded.
  */
 - (void)copyAssetToFile: (NSString *)assetUrl completionHandler: (void(^)(NSString *__nullable tempFileUrl, NSError *__nullable error))completionHandler {
-    NSURL *url = [NSURL URLWithString:assetUrl];
-    PHAsset *asset = [PHAsset fetchAssetsWithALAssetURLs:@[url] options:nil].lastObject;
+    PHAsset *asset;
+
+    if ([assetUrl hasPrefix:@"assets-library"]) {
+        NSURL *url = [NSURL URLWithString:assetUrl];
+        asset = [PHAsset fetchAssetsWithALAssetURLs:@[url] options:nil].lastObject;
+    } else {
+        asset = [[PHAsset fetchAssetsWithLocalIdentifiers:@[assetUrl] options:nil] firstObject];
+    }
+
     if (!asset) {
         NSMutableDictionary* details = [NSMutableDictionary dictionary];
         [details setValue:@"Asset could not be fetched.  Are you missing permissions?" forKey:NSLocalizedDescriptionKey];
@@ -177,7 +184,7 @@ RCT_EXPORT_METHOD(startUpload:(NSDictionary *)options resolve:(RCTPromiseResolve
 
 
         // asset library files have to be copied over to a temp file.  they can't be uploaded directly
-        if ([fileURI hasPrefix:@"assets-library"]) {
+        if ([fileURI hasPrefix:@"assets-library"] || [fileURI hasPrefix:@"ph"]) {
             dispatch_group_t group = dispatch_group_create();
             dispatch_group_enter(group);
             [self copyAssetToFile:fileURI completionHandler:^(NSString * _Nullable tempFileUrl, NSError * _Nullable error) {
