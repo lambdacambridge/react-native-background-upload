@@ -124,12 +124,15 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
     NSArray *resourceList = [PHAssetResource assetResourcesForAsset:asset];
     __block PHAssetResource *assetResource;
     __block BOOL jpegFound = NO;
+    __block BOOL heicFound = NO;
     [resourceList enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
         PHAssetResource *resource = obj;
         NSLog(@"resource %@ uniformTypeIdentifier %@", resource, resource.uniformTypeIdentifier);
         if ([resource.uniformTypeIdentifier isEqualToString:@"public.jpeg"]) {
             assetResource = resource;
             jpegFound = YES;
+        } else if ([resource.uniformTypeIdentifier isEqualToString:@"public.heic"]) {
+            heicFound = YES;
         }
     }];
 
@@ -137,7 +140,7 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
     NSURL *pathUrl = [NSURL fileURLWithPath:pathToWrite];
     NSString *fileURI = pathUrl.absoluteString;
 
-    if (jpegFound) {
+    if (jpegFound || !heicFound) {
         PHAssetResourceRequestOptions *options = [PHAssetResourceRequestOptions new];
         options.networkAccessAllowed = YES;
 
@@ -161,33 +164,22 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
                                                  contentMode:PHImageContentModeDefault
                                                  options:options
                                                  resultHandler:^(UIImage *image, NSDictionary *info) {
-            NSLog(@"got asset %@ image %@ info %@", asset, image, info);
             // Write it to some temp file as a JPEG
-            NSData* imageData = UIImageJPEGRepresentation(image, 1.0f);
-            NSLog(@"imageData %@", imageData);
+            NSData* imageData = UIImageJPEGRepresentation(image, 0.9f);
 
-            NSError* error;
+            NSError* error = [[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:EIO userInfo:nil];
             BOOL result;
             NSString *filePath = pathUrl.path;
 
-            // result = [[NSFileManager defaultManager] createDirectoryAtPath:NSTemporaryDirectory() withIntermediateDirectories:YES attributes:nil error:&error];
-
-            // NSLog(@"createDirectoryAtPath %d error: %@", result, error);
-
             result = [[NSFileManager defaultManager] createFileAtPath:filePath contents:nil attributes:nil];
 
-            NSLog(@"createFileAtPath %d %d %s", result, errno, strerror(errno));
-
-            result = [imageData writeToFile:filePath options:NSDataWritingFileProtectionNone error:&error];
-
-            NSLog(@"createDirectoryAtPath %d error: %@", result, error);
+            result = result && [imageData writeToFile:filePath options:NSDataWritingFileProtectionNone error:&error];
 
             // Return that
             if (result == YES) {
                 completionHandler(fileURI, nil);
             } else {
-                NSError *underlyingError = [[NSError alloc] initWithDomain:NSPOSIXErrorDomain code:EIO userInfo:nil];
-                completionHandler(nil, underlyingError);
+                completionHandler(nil, error);
             }
         }];
     }
