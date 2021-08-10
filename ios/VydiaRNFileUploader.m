@@ -103,6 +103,7 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
  Utility method to copy a PHAsset file into a local temp file, which can then be uploaded.
  */
 - (void)copyAssetToFile: (NSString *)assetUrl completionHandler: (void(^)(NSString *__nullable tempFileUrl, NSError *__nullable error))completionHandler {
+    NSLog(@"#RNBU copyAssetToFile");
     PHAsset *asset;
 
     if ([assetUrl hasPrefix:@"assets-library"]) {
@@ -115,11 +116,14 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
     }
 
     if (!asset) {
+        NSLog(@"#RNBU asset not found");
         NSMutableDictionary* details = [NSMutableDictionary dictionary];
         [details setValue:@"Asset could not be fetched.  Are you missing permissions?" forKey:NSLocalizedDescriptionKey];
         completionHandler(nil,  [NSError errorWithDomain:@"RNUploader" code:5 userInfo:details]);
         return;
     }
+
+    NSLog(@"#RNBU asset %@", asset);
 
     NSArray *resourceList = [PHAssetResource assetResourcesForAsset:asset];
     __block PHAssetResource *assetResource;
@@ -127,7 +131,7 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
     __block BOOL heicFound = NO;
     [resourceList enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
         PHAssetResource *resource = obj;
-        NSLog(@"resource %@ uniformTypeIdentifier %@", resource, resource.uniformTypeIdentifier);
+        NSLog(@"#RNBU resource %@ uniformTypeIdentifier %@", resource, resource.uniformTypeIdentifier);
         if ([resource.uniformTypeIdentifier isEqualToString:@"public.jpeg"]) {
             assetResource = resource;
             jpegFound = YES;
@@ -141,6 +145,8 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
     NSString *fileURI = pathUrl.absoluteString;
 
     if (jpegFound || !heicFound) {
+        NSLog(@"#RNBU standard asset access");
+
         PHAssetResourceRequestOptions *options = [PHAssetResourceRequestOptions new];
         options.networkAccessAllowed = YES;
 
@@ -153,6 +159,8 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
             }
         }];
     } else {
+        NSLog(@"#RNBU convert HEIC access");
+
         // Get image data
         PHImageManager *imageManager = [PHImageManager defaultManager];
 
@@ -236,11 +244,11 @@ RCT_EXPORT_METHOD(startUpload:(NSDictionary *)options resolve:(RCTPromiseResolve
         // asset library files have to be copied over to a temp file.  they can't be uploaded directly
         if ([fileURI hasPrefix:@"assets-library"] || [fileURI hasPrefix:@"ph"]) {
             dispatch_group_t group = dispatch_group_create();
-            NSLog(@"# Group enter");
+            NSLog(@"#RNBU Group enter");
             __block BOOL success = YES;
             dispatch_group_enter(group);
             [self copyAssetToFile:fileURI completionHandler:^(NSString * _Nullable tempFileUrl, NSError * _Nullable error) {
-                NSLog(@"# Copy complete, error %@, tempURL %@", [error localizedDescription], tempFileUrl);
+                NSLog(@"#RNBU Copy complete, error %@, tempURL %@", [error localizedDescription], tempFileUrl);
                 if (error) {
                     success = NO;
                     dispatch_group_leave(group);
@@ -248,14 +256,14 @@ RCT_EXPORT_METHOD(startUpload:(NSDictionary *)options resolve:(RCTPromiseResolve
                     return;
                 }
                 fileURI = tempFileUrl;
-                NSLog(@"# Group leave");
+                NSLog(@"#RNBU Group leave");
                 dispatch_group_leave(group);
             }];
-            NSLog(@"# Group wait");
+            NSLog(@"#RNBU Group wait");
             dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
-            NSLog(@"# Group wait done");
+            NSLog(@"#RNBU Group wait done");
             if (!success) {
-                NSLog(@"# Unsuccessful");
+                NSLog(@"#RNBU Unsuccessful");
                 return;
             }
         }
