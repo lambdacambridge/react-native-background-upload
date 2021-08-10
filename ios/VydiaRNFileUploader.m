@@ -137,6 +137,8 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
             jpegFound = YES;
         } else if ([resource.uniformTypeIdentifier isEqualToString:@"public.heic"]) {
             heicFound = YES;
+        } else if (assetResource == nil) {
+            assetResource = resource;
         }
     }];
 
@@ -145,7 +147,7 @@ RCT_EXPORT_METHOD(getFileInfo:(NSString *)path resolve:(RCTPromiseResolveBlock)r
     NSString *fileURI = pathUrl.absoluteString;
 
     if (jpegFound || !heicFound) {
-        NSLog(@"#RNBU standard asset access");
+        NSLog(@"#RNBU standard asset access of resource %@", assetResource);
 
         PHAssetResourceRequestOptions *options = [PHAssetResourceRequestOptions new];
         options.networkAccessAllowed = YES;
